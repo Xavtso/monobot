@@ -1,10 +1,14 @@
+import os
 import sqlite3
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 
 
 class Database:
-    def __init__(self, path: str = "monobot.db"):
+    def __init__(self, path: str = None):
+        if path is None:
+            data_dir = os.getenv("DATA_DIR", ".")
+            path = os.path.join(data_dir, "monobot.db")
         self.path = path
         self._init_db()
 

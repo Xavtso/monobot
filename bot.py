@@ -89,21 +89,23 @@ async def myid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def _do_sync(mono_client: MonobankClient, owner: str, days: int) -> int:
+def _do_sync(mono_client: MonobankClient, owner: str, days: int) -> tuple[int, int]:
     accounts = mono_client.get_accounts()
+    total_fetched = 0
     total_new = 0
     for account in accounts[:2]:
         account_id = account["id"]
         if account.get("currencyCode", 980) != 980:
             continue
         transactions = mono_client.get_statement(account_id, days=days)
+        total_fetched += len(transactions)
         for tx in transactions:
             if db.transaction_exists(tx["id"]):
                 continue
             category = classifier.classify(tx) if tx["amount"] < 0 else "💰 Надходження"
             db.save_transaction(tx, category, account_id, owner=owner)
             total_new += 1
-    return total_new
+    return total_fetched, total_new
 
 
 async def sync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -111,14 +113,17 @@ async def sync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"⏳ Синхронізую {days} днів...")
     try:
         loop = asyncio.get_event_loop()
-        total_new = await loop.run_in_executor(None, lambda: _do_sync(mono, "me", days))
+        fetched, total_new = await loop.run_in_executor(None, lambda: _do_sync(mono, "me", days))
+        already = fetched - total_new
         await msg.edit_text(
             f"✅ Синк завершено\n\n"
-            f"Нових транзакцій: {total_new}\n\n"
+            f"Отримано від банку: {fetched}\n"
+            f"Нових збережено: {total_new}\n"
+            f"Вже були в базі: {already}\n\n"
             f"/stats — подивитись\n/roast — почути правду"
         )
     except Exception as e:
-        logger.error(f"Sync error: {e}")
+        logger.error(f"Sync error: {e}", exc_info=True)
         await msg.edit_text(f"❌ Синк впав:\n{e}")
 
 
@@ -135,7 +140,7 @@ async def syncpartner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"⏳ Синхронізую {partner_label} за {days} днів...")
     try:
         loop = asyncio.get_event_loop()
-        total_new = await loop.run_in_executor(None, lambda: _do_sync(mono_partner, "partner", days))
+        _, total_new = await loop.run_in_executor(None, lambda: _do_sync(mono_partner, "partner", days))
         await msg.edit_text(
             f"✅ Готово!\n\nНових транзакцій {partner_label}: {total_new}\n\n/family — переглянути разом"
         )
