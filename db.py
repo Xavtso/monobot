@@ -31,9 +31,15 @@ class Database:
                     currency INTEGER,
                     category TEXT,
                     comment TEXT,
+                    owner TEXT DEFAULT 'me',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Міграція — додаємо owner якщо ще нема
+            try:
+                con.execute("ALTER TABLE transactions ADD COLUMN owner TEXT DEFAULT 'me'")
+            except Exception:
+                pass
 
     def transaction_exists(self, tx_id: str) -> bool:
         with self.conn() as con:
@@ -42,73 +48,72 @@ class Database:
             ).fetchone()
             return row is not None
 
-    def save_transaction(self, tx: dict, category: str, account_id: str):
+    def save_transaction(self, tx: dict, category: str, account_id: str, owner: str = "me"):
         with self.conn() as con:
             con.execute("""
                 INSERT OR IGNORE INTO transactions
-                (id, account_id, time, description, mcc, amount, currency, category, comment)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, account_id, time, description, mcc, amount, currency, category, comment, owner)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                tx["id"],
-                account_id,
-                tx.get("time", 0),
-                tx.get("description", ""),
-                tx.get("mcc", 0),
-                tx.get("amount", 0),
-                tx.get("currencyCode", 980),
-                category,
-                tx.get("comment", ""),
+                tx["id"], account_id,
+                tx.get("time", 0), tx.get("description", ""),
+                tx.get("mcc", 0), tx.get("amount", 0),
+                tx.get("currencyCode", 980), category,
+                tx.get("comment", ""), owner,
             ))
 
-    def get_transactions(self, days: int = 30, only_expenses: bool = True) -> list:
+    def get_transactions(self, days: int = 30, only_expenses: bool = True, owner: str = None) -> list:
         since = int((datetime.now() - timedelta(days=days)).timestamp())
         query = "SELECT * FROM transactions WHERE time >= ?"
         params = [since]
-
         if only_expenses:
             query += " AND amount < 0"
-
+        if owner:
+            query += " AND owner = ?"
+            params.append(owner)
         query += " ORDER BY time DESC"
-
         with self.conn() as con:
-            rows = con.execute(query, params).fetchall()
-            return [dict(r) for r in rows]
+            return [dict(r) for r in con.execute(query, params).fetchall()]
 
-    def get_categories_summary(self, days: int = 30) -> list:
+    def get_categories_summary(self, days: int = 30, owner: str = None) -> list:
         since = int((datetime.now() - timedelta(days=days)).timestamp())
+        query = """
+            SELECT category, COUNT(*) as count, SUM(ABS(amount)) as total
+            FROM transactions
+            WHERE time >= ? AND amount < 0 AND category != '💰 Надходження'
+        """
+        params = [since]
+        if owner:
+            query += " AND owner = ?"
+            params.append(owner)
+        query += " GROUP BY category ORDER BY total DESC"
         with self.conn() as con:
-            rows = con.execute("""
-                SELECT category, 
-                       COUNT(*) as count,
-                       SUM(ABS(amount)) as total
-                FROM transactions
-                WHERE time >= ? AND amount < 0
-                GROUP BY category
-                ORDER BY total DESC
-            """, (since,)).fetchall()
-            return [dict(r) for r in rows]
+            return [dict(r) for r in con.execute(query, params).fetchall()]
 
-    def get_total_spent(self, days: int = 30) -> int:
+    def get_total_spent(self, days: int = 30, owner: str = None) -> int:
         since = int((datetime.now() - timedelta(days=days)).timestamp())
+        query = "SELECT SUM(ABS(amount)) as total FROM transactions WHERE time >= ? AND amount < 0"
+        params = [since]
+        if owner:
+            query += " AND owner = ?"
+            params.append(owner)
         with self.conn() as con:
-            row = con.execute("""
-                SELECT SUM(ABS(amount)) as total
-                FROM transactions
-                WHERE time >= ? AND amount < 0
-            """, (since,)).fetchone()
+            row = con.execute(query, params).fetchone()
             return row["total"] or 0
 
-    def get_top_merchants(self, days: int = 30, limit: int = 5) -> list:
+    def get_top_spending(self, days: int = 30, limit: int = 5, owner: str = None) -> list:
+        """Топ витрат — конкретні транзакції, не місця"""
         since = int((datetime.now() - timedelta(days=days)).timestamp())
+        query = """
+            SELECT description, category, SUM(ABS(amount)) as total, COUNT(*) as count
+            FROM transactions
+            WHERE time >= ? AND amount < 0 AND category != '💰 Надходження'
+        """
+        params = [since]
+        if owner:
+            query += " AND owner = ?"
+            params.append(owner)
+        query += " GROUP BY description ORDER BY total DESC LIMIT ?"
+        params.append(limit)
         with self.conn() as con:
-            rows = con.execute("""
-                SELECT description,
-                       COUNT(*) as count,
-                       SUM(ABS(amount)) as total
-                FROM transactions
-                WHERE time >= ? AND amount < 0
-                GROUP BY description
-                ORDER BY total DESC
-                LIMIT ?
-            """, (since, limit)).fetchall()
-            return [dict(r) for r in rows]
+            return [dict(r) for r in con.execute(query, params).fetchall()]

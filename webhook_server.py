@@ -5,7 +5,7 @@ from notifier import format_notification
 logger = logging.getLogger(__name__)
 
 
-async def build_webhook_app(db, classifier, telegram_bot, chat_id: int):
+async def build_webhook_app(db, classifier, telegram_bot, chat_id):
 
     async def handle(request: web.Request) -> web.Response:
         try:
@@ -37,8 +37,11 @@ async def build_webhook_app(db, classifier, telegram_bot, chat_id: int):
             monthly_total = cat_data["total"] if cat_data else abs(tx.get("amount", 0))
             monthly_count = cat_data["count"] if cat_data else 1
 
-            text = format_notification(tx, category, monthly_total, monthly_count)
-            await telegram_bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            if chat_id:
+                text = format_notification(tx, category, monthly_total, monthly_count)
+                await telegram_bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            else:
+                logger.warning(f"Транзакція отримана але TELEGRAM_CHAT_ID не задано: {tx_id}")
 
         except Exception as e:
             logger.error(f"Webhook processing error: {e}")
