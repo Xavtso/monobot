@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from dotenv import load_dotenv
 
 from monobank import MonobankClient
+from privatbank import PrivatBankClient
 from db import Database
 from classifier import Classifier
 from analytics import Analytics
@@ -30,15 +31,25 @@ partner_token = os.getenv("PARTNER_MONO_TOKEN")
 mono_partner = MonobankClient(partner_token) if partner_token else None
 partner_label = os.getenv("PARTNER_LABEL", "партнер")
 
+# PrivatBank — якщо задані всі три змінні
+privat = None
+pb_merchant = os.getenv("PRIVAT_MERCHANT_ID")
+pb_password = os.getenv("PRIVAT_PASSWORD")
+pb_card = os.getenv("PRIVAT_CARD")
+if pb_merchant and pb_password and pb_card:
+    privat = PrivatBankClient(pb_merchant, pb_password, pb_card)
+
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    has_partner = mono_partner is not None
-    partner_hint = f"\n/syncpartner — синхронізувати {partner_label}\n/family — сімейний бюджет" if has_partner else ""
+    banks = "Monobank" + (" + PrivatBank" if privat else "")
+    partner_hint = f"\n/syncpartner — синхронізувати {partner_label}\n/family — сімейний бюджет" if mono_partner else ""
+    privat_hint = "\n/syncprivat — синхронізувати PrivatBank" if privat else ""
     await update.message.reply_text(
-        "💳 MONOBOT\n"
+        f"💳 MONOBOT · {banks}\n"
         "Твій фінансовий радник без цензури\n\n"
         "━━━━━━━━━━━━━━━\n"
         "/sync — злити транзакції з моно\n"
+        f"{privat_hint}"
         "/stats — що ти наробив за місяць\n"
         "/week — тижнева картина маслом\n"
         "/categories — повний розклад\n"
@@ -47,8 +58,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/advice — план як стати менш бідним"
         f"{partner_hint}\n"
         "━━━━━━━━━━━━━━━\n\n"
-        "Або просто напиши що хочеш дізнатись 👇\n"
-        "Починай з /sync"
+        "Або просто напиши що хочеш дізнатись 👇"
     )
 
 
@@ -63,8 +73,9 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💳 MONOBOT — список команд\n\n"
         "📥 Синхронізація\n"
-        "/sync — завантажити транзакції (останні 30 днів)\n"
-        "/sync 7 — завантажити за довільну кількість днів\n"
+        "/sync — Monobank (останні 30 днів)\n"
+        "/sync 7 — за довільну кількість днів\n" +
+        ("/syncprivat — PrivatBank\n" if privat else "/syncprivat — підключити PrivatBank\n") +
         "/reclassify — переосмислити некласифіковані\n\n"
         "📊 Статистика\n"
         "/stats — місяць у цифрах\n"
@@ -125,6 +136,46 @@ async def sync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Sync error: {e}", exc_info=True)
         await msg.edit_text(f"❌ Синк впав:\n{e}")
+
+
+async def syncprivat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not privat:
+        await update.message.reply_text(
+            "Щоб підключити PrivatBank, додай в Railway Variables:\n\n"
+            "PRIVAT_MERCHANT_ID=  (Privat24 → Налаштування → API)\n"
+            "PRIVAT_PASSWORD=     (там само)\n"
+            "PRIVAT_CARD=         (номер картки, 16 цифр)"
+        )
+        return
+
+    days = int(ctx.args[0]) if ctx.args else 30
+    msg = await update.message.reply_text(f"⏳ Синхронізую PrivatBank за {days} днів...")
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _sync_privat():
+            transactions = privat.get_statement(days=days)
+            fetched = len(transactions)
+            new_count = 0
+            for tx in transactions:
+                if db.transaction_exists(tx["id"]):
+                    continue
+                category = classifier.classify(tx) if tx["amount"] < 0 else "💰 Надходження"
+                db.save_transaction(tx, category, "privat", owner="me")
+                new_count += 1
+            return fetched, new_count
+
+        fetched, new_count = await loop.run_in_executor(None, _sync_privat)
+        await msg.edit_text(
+            f"✅ PrivatBank синк завершено\n\n"
+            f"Отримано від банку: {fetched}\n"
+            f"Нових збережено: {new_count}\n"
+            f"Вже були в базі: {fetched - new_count}\n\n"
+            f"/stats — переглянути"
+        )
+    except Exception as e:
+        logger.error(f"PrivatBank sync error: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Помилка PrivatBank:\n{e}")
 
 
 async def syncpartner(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -252,6 +303,7 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("myid", myid))
     app.add_handler(CommandHandler("sync", sync))
+    app.add_handler(CommandHandler("syncprivat", syncprivat))
     app.add_handler(CommandHandler("reclassify", reclassify))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("week", week))
@@ -265,7 +317,8 @@ def main():
 
     async def post_init(application):
         commands = [
-            ("sync",        "Завантажити транзакції з Monobank"),
+            ("sync",        "Синхронізувати Monobank"),
+            ("syncprivat",  "Синхронізувати PrivatBank"),
             ("stats",       "Статистика за місяць"),
             ("week",        "Статистика за тиждень"),
             ("categories",  "Витрати по категоріях"),
