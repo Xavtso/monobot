@@ -52,6 +52,36 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    has_partner = mono_partner is not None
+    partner_section = (
+        f"\n👨‍👩‍ Сімейний бюджет\n"
+        f"/syncpartner — синхронізувати {partner_label}\n"
+        f"/family — витрати разом і окремо"
+    ) if has_partner else ""
+
+    await update.message.reply_text(
+        "💳 MONOBOT — список команд\n\n"
+        "📥 Синхронізація\n"
+        "/sync — завантажити транзакції (останні 30 днів)\n"
+        "/sync 7 — завантажити за довільну кількість днів\n"
+        "/reclassify — переосмислити некласифіковані\n\n"
+        "📊 Статистика\n"
+        "/stats — місяць у цифрах\n"
+        "/week — тиждень\n"
+        "/categories — повний розклад по категоріях"
+        f"{partner_section}\n\n"
+        "🤖 AI-аналіз\n"
+        "/roast — жорсткий розбір витрат\n"
+        "/advice — конкретний план економії\n\n"
+        "💬 Чат\n"
+        "Просто напиши будь-яке питання — бот відповість з урахуванням твоїх витрат\n\n"
+        "⚙️ Інше\n"
+        "/myid — дізнатись свій Telegram ID\n"
+        "/help — цей список"
+    )
+
+
 async def myid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Твій Telegram ID: {update.effective_user.id}\n\n"
@@ -214,6 +244,7 @@ def main():
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("myid", myid))
     app.add_handler(CommandHandler("sync", sync))
     app.add_handler(CommandHandler("reclassify", reclassify))
@@ -237,6 +268,7 @@ def main():
             ("roast",       "Отримати по щці від AI"),
             ("advice",      "План як стати менш бідним"),
             ("myid",        "Мій Telegram ID"),
+            ("help",        "Список всіх команд"),
         ]
         if has_partner:
             commands.insert(2, ("syncpartner", f"Синхронізувати {partner_label}"))
