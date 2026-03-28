@@ -1,13 +1,12 @@
 import asyncio
 import logging
-import os
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from monobank import MonobankClient
 from db import Database
-from classifier import Classifier
+from classifier import Classifier, VALID_CATEGORIES
 from analytics import Analytics
 from patterns import get_pattern_summary
 from privat_csv import parse_privat_csv, PrivatCSVError
@@ -17,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 # In-memory: maps telegram_user_id → tx_id awaiting classification reply
 _pending_classification: dict[int, str] = {}
+
+
+def set_pending(user_id: int, tx_id: str):
+    """Register a pending classification reply for a user. Called by webhook."""
+    _pending_classification[user_id] = tx_id
 
 
 def setup(db: Database, mono: MonobankClient, classifier: Classifier,
@@ -322,7 +326,6 @@ def setup(db: Database, mono: MonobankClient, classifier: Classifier,
             user_input = update.message.text.strip()
 
             # Try to map to a known category
-            from classifier import VALID_CATEGORIES
             matched = next(
                 (c for c in VALID_CATEGORIES if user_input.lower() in c.lower() or c.lower() in user_input.lower()),
                 None
