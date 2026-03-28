@@ -97,11 +97,12 @@ VALID_CATEGORIES = [
 
 
 class Classifier:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, db=None):
         self.client = Groq(api_key=api_key)
+        self.db = db
         self._cache = {}
 
-    def classify(self, tx: dict) -> str:
+    def classify(self, tx: dict, owner: str = "me") -> str:
         mcc = tx.get("mcc", 0)
         if mcc in MCC_CATEGORIES:
             return MCC_CATEGORIES[mcc]
@@ -110,7 +111,13 @@ class Classifier:
         comment = tx.get("comment", "").lower()
         text = f"{description} {comment}"
 
-        # Keyword matching перед AI
+        # Custom keywords from DB (user-taught) — checked before built-ins
+        if self.db:
+            for kw, cat in self.db.get_custom_keywords(owner):
+                if kw in text:
+                    return cat
+
+        # Built-in keyword matching
         for category, keywords in KEYWORD_CATEGORIES.items():
             if any(kw in text for kw in keywords):
                 return category
