@@ -2,9 +2,11 @@ from groq import Groq
 from db import Database
 
 
-SYSTEM_PROMPT = """Ти — Моноботик, жорсткий фінансовий друг.
-Говориш як близька людина: прямо, з підйобами, але по-доброму і з гумором. Молодіжний стиль, без корпоративщини.
-Знаєш витрати користувача і можеш їх коментувати. Пиши коротко, їдко, з емодзі. Тільки українська мова."""
+SYSTEM_PROMPT = """Ти — жорсткий фінансовий трекер без цензури.
+Говориш прямо, коротко, без прикрас і без виправдань.
+Якщо витрата тупа — кажеш що вона тупа. Без "але ти заслуговуєш".
+Факти + різкий коментар. Емодзі помірно. Тільки українська мова.
+Не вигадуй даних — коментуй тільки те що є."""
 
 
 class Analytics:
@@ -45,14 +47,14 @@ class Analytics:
 
         return "\n".join(lines)
 
-    def monthly_stats(self) -> str:
-        text = self._build_stats_text()
-        text += "\n\n/roast — отримати по щці   /advice — план порятунку"
+    def monthly_stats(self, owner: str = None) -> str:
+        text = self._build_stats_text(owner=owner)
+        text += "\n\n/roast — розбір польотів   /advice — план порятунку"
         return text
 
-    def weekly_stats(self) -> str:
-        total = self.db.get_total_spent(days=7)
-        categories = self.db.get_categories_summary(days=7)
+    def weekly_stats(self, owner: str = None) -> str:
+        total = self.db.get_total_spent(days=7, owner=owner)
+        categories = self.db.get_categories_summary(days=7, owner=owner)
         per_day = total // 7
 
         lines = [
@@ -131,26 +133,26 @@ class Analytics:
         ])
         return f"Витрати за місяць: {self._fmt(total)}\nКатегорії:\n{cats}\nНайбільші витрати:\n{tops}"
 
-    async def roast(self) -> str:
-        context = self._finance_context()
+    async def roast(self, owner: str = None) -> str:
+        context = self._finance_context(owner=owner)
         response = self.client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             max_tokens=700,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": (
-                    f"Ось мої витрати:\n{context}\n\n"
+                    f"Ось витрати:\n{context}\n\n"
                     "Зроби жорсткий розбір польотів: знайди найдичніші витрати, "
                     "прокоментуй конкретні цифри з сарказмом, порівняй з чимось реальним. "
-                    "Закінч однією порадою. Без вступів. Максимум 250 слів."
+                    "Закінч однією конкретною порадою. Без вступів. Максимум 250 слів."
                 )}
             ]
         )
         return "🔥 РОЗБІР ПОЛЬОТІВ\n\n" + response.choices[0].message.content.strip()
 
-    async def advice(self) -> str:
-        context = self._finance_context()
-        prev = self.db.get_total_spent(days=60) - self.db.get_total_spent(days=30)
+    async def advice(self, owner: str = None) -> str:
+        context = self._finance_context(owner=owner)
+        prev = self.db.get_total_spent(days=60, owner=owner) - self.db.get_total_spent(days=30, owner=owner)
         response = self.client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             max_tokens=600,
@@ -165,9 +167,9 @@ class Analytics:
         )
         return "💡 ПЛАН ДІЙ\n\n" + response.choices[0].message.content.strip()
 
-    async def chat(self, user_id: int, message: str) -> str:
+    async def chat(self, user_id: int, message: str, owner: str = "me") -> str:
         if user_id not in self._chat_history:
-            context = self._finance_context()
+            context = self._finance_context(owner=owner)
             self._chat_history[user_id] = [
                 {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nФінанси:\n{context}"}
             ]
