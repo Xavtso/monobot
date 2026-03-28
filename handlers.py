@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # In-memory: maps telegram_user_id → tx_id awaiting classification reply
 _pending_classification: dict[int, str] = {}
 
+# In-memory: queue of tx_ids remaining from /reclassify manual review
+_reclassify_queue: dict[int, list[str]] = {}
+
 
 def set_pending(user_id: int, tx_id: str):
     """Register a pending classification reply for a user. Called by webhook."""
@@ -26,6 +29,42 @@ def set_pending(user_id: int, tx_id: str):
 def setup(db: Database, mono: MonobankClient, classifier: Classifier,
           analytics: Analytics, mono_partner=None, partner_label: str = "партнер"):
     """Return a dict of handler coroutines bound to the given services."""
+    from datetime import datetime as _dt
+
+    async def _ask_next_reclassify(bot, chat_id: int, user_id: int):
+        """Send the next unclassified tx from the reclassify queue to the user."""
+        queue = _reclassify_queue.get(user_id, [])
+        if not queue:
+            await bot.send_message(chat_id, "✅ Всі розібрали!\n/categories — переглянути")
+            return
+        tx_id = queue[0]
+        tx = db.get_transaction_by_id(tx_id)
+        if not tx:
+            queue.pop(0)
+            await _ask_next_reclassify(bot, chat_id, user_id)
+            return
+        _pending_classification[user_id] = tx_id
+
+        dt = _dt.fromtimestamp(tx["time"]) if tx.get("time") else None
+        date_str = dt.strftime("%d.%m.%Y %H:%M") if dt else "—"
+        amount_str = f"{abs(tx['amount']) / 100:.0f}₴"
+        desc = tx.get("description") or "—"
+        comment = tx.get("comment") or ""
+        mcc = tx.get("mcc") or 0
+        remaining = len(queue)
+
+        lines = [
+            f"❓ *{desc}*",
+            f"💸 {amount_str}  ·  📅 {date_str}",
+        ]
+        if comment:
+            lines.append(f"💬 {comment}")
+        if mcc:
+            lines.append(f"MCC: {mcc}")
+        lines.append(f"\nНапиши категорію або *пропустити*")
+        lines.append(f"_Залишилось: {remaining}_")
+
+        await bot.send_message(chat_id, "\n".join(lines), parse_mode="Markdown")
 
     async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         owner = get_owner(update.effective_user.id)
@@ -167,35 +206,51 @@ def setup(db: Database, mono: MonobankClient, classifier: Classifier,
         owner = get_owner(update.effective_user.id)
         if owner is None:
             return
-        msg = await update.message.reply_text("🔄 Перекласифіковую 'Інше'...")
+        user_id = update.effective_user.id
+        msg = await update.message.reply_text("🔄 Перекласифіковую 'Інше' через AI...")
         try:
             with db.conn() as con:
-                rows = con.execute(
-                    "SELECT id, description, comment, mcc, amount FROM transactions "
-                    "WHERE category = '❓ Інше' AND amount < 0 AND owner = ?",
+                rows = [dict(r) for r in con.execute(
+                    "SELECT * FROM transactions WHERE category = '❓ Інше' AND amount < 0 AND owner = ?",
                     (owner,)
-                ).fetchall()
+                ).fetchall()]
 
             if not rows:
                 await msg.edit_text("✅ Немає транзакцій для перекласифікації")
                 return
 
-            await msg.edit_text(f"🔄 Знайдено {len(rows)}, класифікую...")
+            await msg.edit_text(f"🔄 Знайдено {len(rows)}, запускаю AI...")
+            loop = asyncio.get_running_loop()
             updated = 0
+            still_unknown = []
+
             for row in rows:
-                tx = {"id": row["id"], "description": row["description"],
-                      "comment": row["comment"], "mcc": row["mcc"], "amount": row["amount"]}
-                category = classifier.classify(tx, owner=owner)
+                category = await loop.run_in_executor(
+                    None, lambda r=row: classifier.classify(r, owner=owner, force=True)
+                )
                 if category != "❓ Інше":
                     with db.conn() as con:
                         con.execute("UPDATE transactions SET category = ? WHERE id = ?",
                                     (category, row["id"]))
                     updated += 1
+                else:
+                    still_unknown.append(row["id"])
 
+            if not still_unknown:
+                await msg.edit_text(
+                    f"✅ Готово!\n\nАвто-класифіковано: {updated} з {len(rows)}\n/categories — переглянути"
+                )
+                return
+
+            _reclassify_queue[user_id] = still_unknown
             await msg.edit_text(
-                f"✅ Готово!\n\nПерекласифіковано: {updated} з {len(rows)}\n/categories — переглянути"
+                f"✅ AI впорався з {updated} з {len(rows)}\n"
+                f"❓ Залишилось невідомих: {len(still_unknown)}\n\n"
+                f"Пройдемося по них разом 👇"
             )
+            await _ask_next_reclassify(ctx.bot, update.effective_chat.id, user_id)
         except Exception as e:
+            logger.error(f"Reclassify error: {e}", exc_info=True)
             await msg.edit_text(f"❌ Помилка: {e}")
 
     async def stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -325,28 +380,47 @@ def setup(db: Database, mono: MonobankClient, classifier: Classifier,
             tx_id = _pending_classification.pop(user_id)
             user_input = update.message.text.strip()
 
-            # Try to map to a known category
+            # Remove from reclassify queue regardless of outcome
+            if user_id in _reclassify_queue and tx_id in _reclassify_queue[user_id]:
+                _reclassify_queue[user_id].remove(tx_id)
+
+            # Skip command
+            if user_input.lower() in ("пропустити", "skip", "п"):
+                await update.message.reply_text("⏭ Пропустив")
+                if _reclassify_queue.get(user_id):
+                    await _ask_next_reclassify(ctx.bot, update.effective_chat.id, user_id)
+                return
+
+            # Try to map to a known valid category
             matched = next(
                 (c for c in VALID_CATEGORIES if user_input.lower() in c.lower() or c.lower() in user_input.lower()),
                 None
             )
-            category = matched or "❓ Інше"
+            category = matched or user_input  # use raw input if no match — user knows better
 
-            # Extract keyword from original description for future classification
+            # Save keyword for future auto-classification
+            # Try pending_classifications table first, fall back to transactions table
             pending = db.get_pending_classifications(owner)
             pending_tx = next((p for p in pending if p["tx_id"] == tx_id), None)
             if pending_tx:
-                desc = pending_tx["description"].lower().split()[0]  # first word as keyword
-                if len(desc) >= 3:
-                    db.save_custom_keyword(desc, category, owner)
+                source_desc = pending_tx["description"]
+                db.resolve_pending_classification(tx_id, category)
+            else:
+                tx_row = db.get_transaction_by_id(tx_id)
+                source_desc = tx_row["description"] if tx_row else ""
+                with db.conn() as con:
+                    con.execute("UPDATE transactions SET category = ? WHERE id = ?", (category, tx_id))
 
-            db.resolve_pending_classification(tx_id, category)
+            if source_desc:
+                keyword = source_desc.lower().split()[0]
+                if len(keyword) >= 3:
+                    db.save_custom_keyword(keyword, category, owner)
 
             label = matched or user_input
-            await update.message.reply_text(
-                f"✅ Записав: *{label}*\n_Наступного разу визначу автоматично_",
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text(f"✅ *{label}*", parse_mode="Markdown")
+
+            if _reclassify_queue.get(user_id):
+                await _ask_next_reclassify(ctx.bot, update.effective_chat.id, user_id)
             return
 
         await ctx.bot.send_chat_action(update.effective_chat.id, "typing")

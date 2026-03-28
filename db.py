@@ -165,6 +165,11 @@ class Database:
                 (keyword.lower(), category, owner)
             )
 
+    def get_transaction_by_id(self, tx_id: str) -> dict | None:
+        with self.conn() as con:
+            row = con.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,)).fetchone()
+            return dict(row) if row else None
+
     def get_custom_keywords(self, owner: str) -> list[tuple[str, str]]:
         with self.conn() as con:
             rows = con.execute(

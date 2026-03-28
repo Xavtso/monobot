@@ -102,7 +102,7 @@ class Classifier:
         self.db = db
         self._cache = {}
 
-    def classify(self, tx: dict, owner: str = "me") -> str:
+    def classify(self, tx: dict, owner: str = "me", force: bool = False) -> str:
         mcc = tx.get("mcc", 0)
         if mcc in MCC_CATEGORIES:
             return MCC_CATEGORIES[mcc]
@@ -123,21 +123,28 @@ class Classifier:
                 return category
 
         cache_key = f"{description}_{mcc}"
-        if cache_key in self._cache:
+        if not force and cache_key in self._cache:
             return self._cache[cache_key]
 
         amount = abs(tx.get("amount", 0)) / 100
+        date_str = ""
+        if tx.get("time"):
+            from datetime import datetime
+            date_str = datetime.fromtimestamp(tx["time"]).strftime("%d.%m.%Y %H:%M")
+
         category = self._classify_with_ai(
-            tx.get("description", ""), tx.get("comment", ""), mcc, amount
+            tx.get("description", ""), tx.get("comment", ""), mcc, amount, date_str
         )
         self._cache[cache_key] = category
         return category
 
-    def _classify_with_ai(self, description: str, comment: str, mcc: int, amount: float) -> str:
+    def _classify_with_ai(self, description: str, comment: str, mcc: int, amount: float,
+                          date_str: str = "") -> str:
         categories_list = "\n".join(VALID_CATEGORIES)
+        date_line = f" | дата: {date_str}" if date_str else ""
         prompt = f"""Визнач категорію для банківської транзакції. Відповідай ЛИШЕ одним рядком — точною назвою категорії зі списку нижче. Ніяких пояснень.
 
-Транзакція: "{description}" | коментар: "{comment}" | MCC: {mcc} | {amount:.0f} грн
+Транзакція: "{description}" | коментар: "{comment}" | MCC: {mcc} | {amount:.0f} грн{date_line}
 
 Категорії:
 {categories_list}"""

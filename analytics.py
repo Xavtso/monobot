@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from groq import Groq
 from db import Database
 
@@ -123,6 +124,7 @@ class Analytics:
         total = self.db.get_total_spent(days=30, owner=owner)
         categories = self.db.get_categories_summary(days=30, owner=owner)
         top = self.db.get_top_spending(days=30, limit=3, owner=owner)
+        transactions = self.db.get_transactions(days=30, owner=owner)
 
         cats = "\n".join([
             f"- {c['category']}: {self._fmt(c['total'])} ({c['count']} разів)"
@@ -132,7 +134,26 @@ class Analytics:
             f"- {t['description']} ({t['category']}): {self._fmt(t['total'])}"
             for t in top
         ])
-        return f"Витрати за місяць: {self._fmt(total)}\nКатегорії:\n{cats}\nНайбільші витрати:\n{tops}"
+
+        tx_lines = []
+        for tx in transactions[:40]:
+            dt = datetime.fromtimestamp(tx["time"]) if tx.get("time") else None
+            date_str = dt.strftime("%d.%m %H:%M") if dt else "—"
+            amount = abs(tx["amount"]) / 100
+            desc = tx.get("description") or "—"
+            comment = tx.get("comment") or ""
+            category = tx.get("category") or "❓ Інше"
+            comment_part = f" ({comment})" if comment else ""
+            tx_lines.append(f"- {date_str}  {desc}{comment_part}  {category}  -{amount:.0f}₴")
+
+        tx_block = "\n".join(tx_lines) if tx_lines else "немає"
+
+        return (
+            f"Витрати за місяць: {self._fmt(total)}\n"
+            f"Категорії:\n{cats}\n"
+            f"Найбільші витрати:\n{tops}\n"
+            f"Транзакції (останні 40, нові спершу):\n{tx_block}"
+        )
 
     async def roast(self, owner: str = None) -> str:
         context = self._finance_context(owner=owner)
