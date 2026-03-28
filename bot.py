@@ -90,19 +90,12 @@ def main():
         else:
             logger.warning("MONO_PUBLIC_KEY not set — webhook signature verification disabled ⚠️")
 
-        # Wire set_pending so webhook can trigger classification replies
-        async def webhook_with_pending(db, classifier, bot, chat_id_int, owner="me"):
-            from webhook_server import build_webhook_app as _build
-            # Monkey-patch: after webhook saves pending, call set_pending(chat_id, tx_id)
-            # This is handled inside build_webhook_app via the owner param
-            return await _build(db, classifier, bot, chat_id_int, owner=owner)
-
         webhook_app = await build_webhook_app(
             db, classifier, application.bot, mono_chat_id,
             owner="me"
         )
 
-        # Register set_pending in webhook app context so it can notify handlers
+        # Wire set_pending so webhook can trigger classification replies
         webhook_app["set_pending"] = set_pending
         webhook_app["chat_id"] = mono_chat_id
 
