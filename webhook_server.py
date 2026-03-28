@@ -83,6 +83,11 @@ async def build_webhook_app(db, classifier, telegram_bot, chat_id, owner: str = 
                 if category == "❓ Інше":
                     amount_hrn = abs(tx.get("amount", 0)) / 100
                     db.save_pending_classification(tx_id, owner, tx.get("description", ""), tx.get("amount", 0))
+                    # Notify handlers layer so chat() can intercept the user's next message
+                    _set_pending = request.app.get("set_pending")
+                    _wh_chat_id = request.app.get("chat_id")
+                    if _set_pending and _wh_chat_id:
+                        _set_pending(_wh_chat_id, tx_id)
                     await telegram_bot.send_message(
                         chat_id=chat_id,
                         text=f"❓ Шо це таке — *{tx.get('description', '???')}* {amount_hrn:.0f}₴?\nНапиши категорію або опиши одним словом.",
