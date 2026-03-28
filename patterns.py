@@ -29,7 +29,7 @@ def check_patterns(db: Database, tx: dict, category: str, owner: str) -> list[st
             (owner, category, day_start)
         ).fetchone()["n"]
 
-    if count_today >= 2:  # this tx makes it count_today+1
+    if count_today >= 2:  # triggers on the 3rd+ tx of this category today (current tx not yet saved)
         total = count_today + 1
         cat_word = _category_word(category)
         alerts.append(f"{total} {cat_word} за день. норм?")

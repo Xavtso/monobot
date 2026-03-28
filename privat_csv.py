@@ -62,8 +62,7 @@ def _parse_xlsx(file_bytes: bytes) -> list[dict]:
     except ImportError:
         raise PrivatCSVError("openpyxl not installed — pip install openpyxl")
 
-    import io as _io
-    wb = openpyxl.load_workbook(_io.BytesIO(file_bytes), read_only=True, data_only=True)
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
