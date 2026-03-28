@@ -1,60 +1,58 @@
+import random
 from datetime import datetime
 
 
 CATEGORY_COMMENTS = {
     "☕ Кафе/Ресторани": [
-        "ще одна кава якої ти 'заслуговуєш'",
+        "ще одна кава",
+        "бариста вже знає твоє ім'я?",
         "кофеїнова залежність задокументована",
-        "бариста тебе вже по імені знає?",
+        "може вдома зварити?",
     ],
     "🍔 Фастфуд": [
-        "тіло — храм, але сьогодні він їсть бургер",
-        "здорове харчування сьогодні відпочиває",
+        "тіло-сміттєвий бак активовано",
+        "здорове харчування поставлено на паузу",
         "макдак знову переміг",
+        "вдруге за тиждень",
     ],
     "🍺 Бари": [
-        "інвестиція в соціальний капітал",
+        "інвестиція в похмілля",
         "рішення які здаються мудрими після третього",
-        "завтра буде важко",
+        "завтра пошкодуєш",
     ],
     "🛒 Супермаркет": [
-        "їжа — базова потреба, ок",
         "сподіваємось не тільки чіпси",
-        "класика жанру",
+        "базова потреба",
+        "класика",
     ],
     "🚕 Таксі": [
-        "ноги є але таксі крутіше",
-        "транспортна незалежність коштує грошей",
+        "ноги є, але таксі крутіше",
         "метро — для слабаків?",
+        "транспортна незалежність коштує",
     ],
     "💅 Краса": [
-        "інвестиція в себе — це окей",
-        "виглядати добре — дорого",
         "краса вимагає жертв (фінансових)",
+        "виглядати добре — дорого",
     ],
     "🎮 Розваги": [
         "гроші за щастя — чесна угода",
         "відпочинок теж коштує",
-        "головне щоб було весело",
     ],
     "💡 Підписки": [
         "ти точно цим користуєшся?",
         "ще одна підписка яку забудеш відмінити",
-        "регулярне списання — тихий вбивця бюджету",
+        "тихий вбивця бюджету",
     ],
     "⛽ АЗС": [
         "машина їсть не менше за тебе",
         "нафта не дешевшає",
-        "класика автовласника",
     ],
     "🚬 Тютюн/Алкоголь": [
-        "прем'єр підписка на проблеми зі здоров'ям",
-        "це хобі з преміум-підпискою",
+        "підписка на проблеми зі здоров'ям",
         "лікарі скажуть дякую потім",
     ],
     "👗 Одяг": [
-        "шафа знову поповнилась",
-        "але є ж що вдягнути...",
+        "але ж є що вдягнути...",
         "шопінг-терапія — дорогий лікар",
     ],
 }
@@ -67,19 +65,22 @@ DEFAULT_COMMENTS = [
 
 
 def get_comment(category: str, amount: float) -> str:
-    import random
     comments = CATEGORY_COMMENTS.get(category, DEFAULT_COMMENTS)
     comment = random.choice(comments)
-
     if amount > 1000:
         comment += " 💀"
     elif amount > 500:
         comment += " 😬"
-
     return comment
 
 
-def format_notification(tx: dict, category: str, monthly_total: int, monthly_count: int) -> str:
+def format_notification(
+    tx: dict,
+    category: str,
+    monthly_total: int,
+    monthly_count: int,
+    pattern_alerts: list[str] = None,
+) -> str:
     amount = abs(tx.get("amount", 0)) / 100
     balance = tx.get("balance", 0) / 100
     description = tx.get("description", "")
@@ -92,7 +93,7 @@ def format_notification(tx: dict, category: str, monthly_total: int, monthly_cou
     monthly_sum = monthly_total / 100
 
     lines = [
-        f"💸 {amount:,.0f}₴  ·  {description}",
+        f"💸 *{amount:,.0f}₴*  ·  {description}",
         f"{category}  ·  {time_emoji} баланс {balance:,.0f}₴",
     ]
 
@@ -100,7 +101,13 @@ def format_notification(tx: dict, category: str, monthly_total: int, monthly_cou
         lines.append(f"📝 {comment_text}")
 
     lines.append("")
-    lines.append(f"Цього місяця на {category.split()[-1].lower()}: {monthly_sum:,.0f}₴ ({monthly_count} разів)")
+    cat_name = category.split(" ", 1)[-1].lower() if " " in category else category.lower()
+    lines.append(f"Цього місяця {cat_name}: {monthly_sum:,.0f}₴ ({monthly_count}×)")
     lines.append(f"_{get_comment(category, amount)}_")
+
+    if pattern_alerts:
+        lines.append("")
+        for alert in pattern_alerts:
+            lines.append(f"⚠️ {alert}")
 
     return "\n".join(lines)
