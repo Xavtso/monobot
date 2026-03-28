@@ -79,7 +79,7 @@ def format_notification(
     category: str,
     monthly_total: int,
     monthly_count: int,
-    pattern_alerts: list[str] = None,
+    pattern_alerts: list[str] | None = None,
 ) -> str:
     amount = abs(tx.get("amount", 0)) / 100
     balance = tx.get("balance", 0) / 100

@@ -1,6 +1,6 @@
 import base64
+import json
 import logging
-import os
 from aiohttp import web
 from notifier import format_notification
 from patterns import check_patterns
@@ -23,7 +23,6 @@ def _verify_signature(body: bytes, x_sign_b64: str) -> bool:
         return True  # verification disabled — log warning already shown at startup
     try:
         from nacl.signing import VerifyKey
-        from nacl.exceptions import BadSignatureError
         vk = VerifyKey(_mono_public_key)
         sig = base64.b64decode(x_sign_b64)
         vk.verify(body, sig)
@@ -38,12 +37,15 @@ async def build_webhook_app(db, classifier, telegram_bot, chat_id, owner: str = 
         body = await request.read()
 
         x_sign = request.headers.get("X-Sign", "")
-        if x_sign and not _verify_signature(body, x_sign):
+        if _mono_public_key:
+            if not x_sign or not _verify_signature(body, x_sign):
+                logger.warning("Webhook signature missing or invalid — rejected")
+                return web.Response(status=400)
+        elif x_sign and not _verify_signature(body, x_sign):
             logger.warning("Webhook signature verification failed — rejected")
             return web.Response(status=400)
 
         try:
-            import json
             body_json = json.loads(body)
         except Exception:
             return web.Response(status=400)
