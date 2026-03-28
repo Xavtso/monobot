@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime
 from groq import Groq
 from db import Database
@@ -8,7 +9,33 @@ SYSTEM_PROMPT = """Ти — жорсткий фінансовий трекер �
 Говориш прямо, коротко, без прикрас і без виправдань.
 Якщо витрата тупа — кажеш що вона тупа. Без "але ти заслуговуєш".
 Факти + різкий коментар. Емодзі помірно. Тільки українська мова.
-Не вигадуй даних — коментуй тільки те що є."""
+Не вигадуй даних — коментуй тільки те що є.
+Якщо користувач просить перекласифікувати транзакцію — використовуй інструмент update_category з точним tx_id з контексту."""
+
+CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "update_category",
+            "description": "Оновити категорію транзакції в базі даних. "
+                           "Використовуй коли користувач каже що транзакція класифікована неправильно.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tx_id": {
+                        "type": "string",
+                        "description": "Точний ID транзакції з контексту (в дужках після дати)"
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Нова категорія"
+                    }
+                },
+                "required": ["tx_id", "category"]
+            }
+        }
+    }
+]
 
 
 class Analytics:
@@ -144,7 +171,9 @@ class Analytics:
             comment = tx.get("comment") or ""
             category = tx.get("category") or "❓ Інше"
             comment_part = f" ({comment})" if comment else ""
-            tx_lines.append(f"- {date_str}  {desc}{comment_part}  {category}  -{amount:.0f}₴")
+            tx_lines.append(
+                f"- [{tx['id']}] {date_str}  {desc}{comment_part}  {category}  -{amount:.0f}₴"
+            )
 
         tx_block = "\n".join(tx_lines) if tx_lines else "немає"
 
@@ -198,27 +227,84 @@ class Analytics:
         return "💡 ПЛАН ДІЙ\n\n" + response.choices[0].message.content.strip()
 
     async def chat(self, user_id: int, message: str, owner: str = "me") -> str:
+        # Always refresh context so transaction list is current
+        context = self._finance_context(owner=owner)
         if user_id not in self._chat_history:
-            context = self._finance_context(owner=owner)
-            self._chat_history[user_id] = [
-                {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nФінанси:\n{context}"}
-            ]
-
-        self._chat_history[user_id].append({"role": "user", "content": message})
+            self._chat_history[user_id] = []
 
         history = self._chat_history[user_id]
-        if len(history) > 21:
-            self._chat_history[user_id] = [history[0]] + history[-20:]
+        if len(history) > 20:
+            self._chat_history[user_id] = history[-20:]
+            history = self._chat_history[user_id]
 
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self.client.chat.completions.create(
+        messages = [
+            {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nФінанси:\n{context}"},
+            *history,
+            {"role": "user", "content": message},
+        ]
+
+        loop = asyncio.get_running_loop()
+
+        def _run():
+            resp = self.client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 max_tokens=500,
-                messages=self._chat_history[user_id]
+                messages=messages,
+                tools=CHAT_TOOLS,
+                tool_choice="auto",
             )
-        )
-        reply = response.choices[0].message.content.strip()
+            ai_msg = resp.choices[0].message
+
+            # No tool calls — plain text reply
+            if not ai_msg.tool_calls:
+                return ai_msg.content.strip(), []
+
+            # Execute tool calls
+            tool_results = []
+            executed = []
+            for tc in ai_msg.tool_calls:
+                if tc.function.name == "update_category":
+                    args = json.loads(tc.function.arguments)
+                    tx_id = args.get("tx_id", "")
+                    category = args.get("category", "")
+                    with self.db.conn() as con:
+                        rows_affected = con.execute(
+                            "UPDATE transactions SET category = ? WHERE id = ? AND owner = ?",
+                            (category, tx_id, owner)
+                        ).rowcount
+                    result = (
+                        f"Оновлено: {category}" if rows_affected > 0
+                        else f"Транзакція {tx_id} не знайдена"
+                    )
+                    executed.append((tx_id, category, rows_affected > 0))
+                    tool_results.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    })
+
+            # Follow-up message after tool execution
+            follow_messages = messages + [
+                {"role": "assistant", "tool_calls": ai_msg.tool_calls, "content": ""},
+                *tool_results,
+            ]
+            follow = self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                max_tokens=300,
+                messages=follow_messages,
+            )
+            return follow.choices[0].message.content.strip(), executed
+
+        reply, executed = await loop.run_in_executor(None, _run)
+
+        self._chat_history[user_id].append({"role": "user", "content": message})
         self._chat_history[user_id].append({"role": "assistant", "content": reply})
+
+        # Append confirmation of actual DB writes
+        if executed:
+            saved = [f"✅ {cat}" for _, cat, ok in executed if ok]
+            failed = [f"❌ {tid}" for tid, _, ok in executed if not ok]
+            notes = "\n".join(saved + failed)
+            reply = f"{reply}\n\n_{notes} — записано в БД_"
+
         return reply
