@@ -98,6 +98,10 @@ def main():
         # Wire set_pending so webhook can trigger classification replies
         webhook_app["set_pending"] = set_pending
         webhook_app["chat_id"] = mono_chat_id
+        # Use MY_TELEGRAM_ID as the user_id for pending classification replies
+        my_user_id = os.getenv("MY_TELEGRAM_ID")
+        if my_user_id:
+            webhook_app["user_id"] = int(my_user_id)
 
         runner = web.AppRunner(webhook_app)
         await runner.setup()

@@ -1,3 +1,4 @@
+import asyncio
 from groq import Groq
 from db import Database
 
@@ -135,35 +136,43 @@ class Analytics:
 
     async def roast(self, owner: str = None) -> str:
         context = self._finance_context(owner=owner)
-        response = self.client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            max_tokens=700,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Ось витрати:\n{context}\n\n"
-                    "Зроби жорсткий розбір польотів: знайди найдичніші витрати, "
-                    "прокоментуй конкретні цифри з сарказмом, порівняй з чимось реальним. "
-                    "Закінч однією конкретною порадою. Без вступів. Максимум 250 слів."
-                )}
-            ]
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                max_tokens=700,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": (
+                        f"Ось витрати:\n{context}\n\n"
+                        "Зроби жорсткий розбір польотів: знайди найдичніші витрати, "
+                        "прокоментуй конкретні цифри з сарказмом, порівняй з чимось реальним. "
+                        "Закінч однією конкретною порадою. Без вступів. Максимум 250 слів."
+                    )}
+                ]
+            )
         )
         return "🔥 РОЗБІР ПОЛЬОТІВ\n\n" + response.choices[0].message.content.strip()
 
     async def advice(self, owner: str = None) -> str:
         context = self._finance_context(owner=owner)
         prev = self.db.get_total_spent(days=60, owner=owner) - self.db.get_total_spent(days=30, owner=owner)
-        response = self.client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            max_tokens=600,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Витрати:\n{context}\nПопередній місяць: {self._fmt(prev)}\n\n"
-                    "Топ-3 де скоротити з конкретними сумами. Що не чіпати. "
-                    "Одна дія на цьому тижні. Без води. Максимум 200 слів."
-                )}
-            ]
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                max_tokens=600,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": (
+                        f"Витрати:\n{context}\nПопередній місяць: {self._fmt(prev)}\n\n"
+                        "Топ-3 де скоротити з конкретними сумами. Що не чіпати. "
+                        "Одна дія на цьому тижні. Без води. Максимум 200 слів."
+                    )}
+                ]
+            )
         )
         return "💡 ПЛАН ДІЙ\n\n" + response.choices[0].message.content.strip()
 
@@ -180,10 +189,14 @@ class Analytics:
         if len(history) > 21:
             self._chat_history[user_id] = [history[0]] + history[-20:]
 
-        response = self.client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            max_tokens=500,
-            messages=self._chat_history[user_id]
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                max_tokens=500,
+                messages=self._chat_history[user_id]
+            )
         )
         reply = response.choices[0].message.content.strip()
         self._chat_history[user_id].append({"role": "assistant", "content": reply})
