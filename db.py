@@ -44,6 +44,23 @@ class Database:
                 con.execute("ALTER TABLE transactions ADD COLUMN owner TEXT DEFAULT 'me'")
             except Exception:
                 pass
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS pending_classifications (
+                    tx_id TEXT PRIMARY KEY,
+                    owner TEXT,
+                    description TEXT,
+                    amount INTEGER,
+                    asked_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS custom_keywords (
+                    keyword TEXT,
+                    category TEXT,
+                    added_by TEXT,
+                    PRIMARY KEY (keyword, added_by)
+                )
+            """)
 
     def transaction_exists(self, tx_id: str) -> bool:
         with self.conn() as con:
@@ -121,3 +138,36 @@ class Database:
         params.append(limit)
         with self.conn() as con:
             return [dict(r) for r in con.execute(query, params).fetchall()]
+
+    def save_pending_classification(self, tx_id: str, owner: str, description: str, amount: int):
+        with self.conn() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO pending_classifications (tx_id, owner, description, amount) VALUES (?,?,?,?)",
+                (tx_id, owner, description, amount)
+            )
+
+    def get_pending_classifications(self, owner: str) -> list:
+        with self.conn() as con:
+            return [dict(r) for r in con.execute(
+                "SELECT * FROM pending_classifications WHERE owner = ? ORDER BY asked_at",
+                (owner,)
+            ).fetchall()]
+
+    def resolve_pending_classification(self, tx_id: str, category: str):
+        with self.conn() as con:
+            con.execute("DELETE FROM pending_classifications WHERE tx_id = ?", (tx_id,))
+            con.execute("UPDATE transactions SET category = ? WHERE id = ?", (category, tx_id))
+
+    def save_custom_keyword(self, keyword: str, category: str, owner: str):
+        with self.conn() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO custom_keywords (keyword, category, added_by) VALUES (?,?,?)",
+                (keyword.lower(), category, owner)
+            )
+
+    def get_custom_keywords(self, owner: str) -> list[tuple[str, str]]:
+        with self.conn() as con:
+            rows = con.execute(
+                "SELECT keyword, category FROM custom_keywords WHERE added_by = ?", (owner,)
+            ).fetchall()
+            return [(r["keyword"], r["category"]) for r in rows]
