@@ -31,7 +31,8 @@ def _verify_signature(body: bytes, x_sign_b64: str) -> bool:
         return False
 
 
-async def build_webhook_app(db, classifier, telegram_bot, chat_id, owner: str = "me"):
+def _make_handler(db, classifier, telegram_bot, chat_id, owner, app_ref):
+    """Return an aiohttp request handler for the given owner."""
 
     async def handle(request: web.Request) -> web.Response:
         body = await request.read()
@@ -79,13 +80,11 @@ async def build_webhook_app(db, classifier, telegram_bot, chat_id, owner: str = 
                 text = format_notification(tx, category, monthly_total, monthly_count, pattern_alerts)
                 await telegram_bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
 
-                # Ask for classification if unclassified
                 if category == "❓ Інше":
                     amount_hrn = abs(tx.get("amount", 0)) / 100
                     db.save_pending_classification(tx_id, owner, tx.get("description", ""), tx.get("amount", 0))
-                    # Notify handlers layer so chat() can intercept the user's next message
-                    _set_pending = request.app.get("set_pending")
-                    _wh_user_id = request.app.get("user_id")
+                    _set_pending = app_ref.get("set_pending")
+                    _wh_user_id = app_ref.get(f"user_id_{owner}")
                     if _set_pending and _wh_user_id:
                         _set_pending(_wh_user_id, tx_id)
                     await telegram_bot.send_message(
@@ -94,13 +93,30 @@ async def build_webhook_app(db, classifier, telegram_bot, chat_id, owner: str = 
                         parse_mode="Markdown"
                     )
             else:
-                logger.warning(f"Транзакція отримана але TELEGRAM_CHAT_ID не задано: {tx_id}")
+                logger.warning(f"Транзакція отримана але chat_id не задано: {tx_id}")
 
         except Exception as e:
-            logger.error(f"Webhook processing error: {e}", exc_info=True)
+            logger.error(f"Webhook processing error ({owner}): {e}", exc_info=True)
 
         return web.Response(status=200)
 
+    return handle
+
+
+async def build_webhook_app(db, classifier, telegram_bot,
+                            chat_id_me, chat_id_partner=None):
     app = web.Application()
-    app.router.add_post("/webhook", handle)
+
+    app.router.add_post(
+        "/webhook",
+        _make_handler(db, classifier, telegram_bot, chat_id_me, "me", app)
+    )
+
+    if chat_id_partner:
+        app.router.add_post(
+            "/webhook/partner",
+            _make_handler(db, classifier, telegram_bot, chat_id_partner, "partner", app)
+        )
+        logger.info("Partner webhook route /webhook/partner enabled ✅")
+
     return app

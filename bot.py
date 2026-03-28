@@ -82,6 +82,9 @@ def main():
         port = int(os.getenv("PORT", 8080))
         mono_chat_id = int(chat_id) if chat_id else None
 
+        partner_chat_id_env = os.getenv("PARTNER_TELEGRAM_ID")
+        partner_chat_id = int(partner_chat_id_env) if partner_chat_id_env and mono_partner else None
+
         # Load Monobank public key for webhook verification
         mono_pub_key = os.getenv("MONO_PUBLIC_KEY", "")
         if mono_pub_key:
@@ -91,17 +94,18 @@ def main():
             logger.warning("MONO_PUBLIC_KEY not set — webhook signature verification disabled ⚠️")
 
         webhook_app = await build_webhook_app(
-            db, classifier, application.bot, mono_chat_id,
-            owner="me"
+            db, classifier, application.bot,
+            chat_id_me=mono_chat_id,
+            chat_id_partner=partner_chat_id,
         )
 
-        # Wire set_pending so webhook can trigger classification replies
+        # Wire set_pending and user IDs so webhook can trigger classification replies
         webhook_app["set_pending"] = set_pending
-        webhook_app["chat_id"] = mono_chat_id
-        # Use MY_TELEGRAM_ID as the user_id for pending classification replies
         my_user_id = os.getenv("MY_TELEGRAM_ID")
         if my_user_id:
-            webhook_app["user_id"] = int(my_user_id)
+            webhook_app["user_id_me"] = int(my_user_id)
+        if partner_chat_id_env:
+            webhook_app["user_id_partner"] = int(partner_chat_id_env)
 
         runner = web.AppRunner(webhook_app)
         await runner.setup()
@@ -111,7 +115,10 @@ def main():
         webhook_url = os.getenv("WEBHOOK_URL", "").rstrip("/")
         if webhook_url:
             ok = mono.set_webhook(f"{webhook_url}/webhook")
-            logger.info(f"Monobank webhook: {'✅' if ok else '❌'} {webhook_url}/webhook")
+            logger.info(f"Monobank webhook (me): {'✅' if ok else '❌'} {webhook_url}/webhook")
+            if mono_partner:
+                ok_p = mono_partner.set_webhook(f"{webhook_url}/webhook/partner")
+                logger.info(f"Monobank webhook (partner): {'✅' if ok_p else '❌'} {webhook_url}/webhook/partner")
 
     app.post_init = post_init
 

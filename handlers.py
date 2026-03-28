@@ -219,15 +219,33 @@ def setup(db: Database, mono: MonobankClient, classifier: Classifier,
                 await msg.edit_text("✅ Немає транзакцій для перекласифікації")
                 return
 
-            await msg.edit_text(f"🔄 Знайдено {len(rows)}, запускаю AI...")
+            total = len(rows)
+            await msg.edit_text(f"🔄 Знайдено {total}, запускаю AI...")
             loop = asyncio.get_running_loop()
             updated = 0
             still_unknown = []
 
-            for row in rows:
-                category = await loop.run_in_executor(
-                    None, lambda r=row: classifier.classify(r, owner=owner, force=True)
-                )
+            for i, row in enumerate(rows):
+                # Update progress every 10 transactions
+                if i > 0 and i % 10 == 0:
+                    try:
+                        await msg.edit_text(
+                            f"🔄 AI класифікує... {i}/{total}\n"
+                            f"✅ Вже визначено: {updated}"
+                        )
+                    except Exception:
+                        pass
+
+                try:
+                    category = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, lambda r=row: classifier.classify(r, owner=owner, force=True)
+                        ),
+                        timeout=10.0
+                    )
+                except asyncio.TimeoutError:
+                    category = "❓ Інше"
+
                 if category != "❓ Інше":
                     with db.conn() as con:
                         con.execute("UPDATE transactions SET category = ? WHERE id = ?",
