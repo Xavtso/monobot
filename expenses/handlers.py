@@ -416,9 +416,9 @@ def register_expense_handlers(app: Application):
 
     _db = ExpenseDB(db_path)
 
-    app.add_handler(CommandHandler(["expenses", "витрати"], expenses_menu))
-    app.add_handler(CommandHandler(["статистика"], stats_cmd))
-    app.add_handler(CommandHandler(["history", "історія"], history_cmd))
+    app.add_handler(CommandHandler(["expenses", "exp"], expenses_menu))
+    app.add_handler(CommandHandler(["estats"], stats_cmd))
+    app.add_handler(CommandHandler(["history"], history_cmd))
     app.add_handler(CallbackQueryHandler(callback_handler, pattern=r"^exp_"))
 
     # group=-1 → runs before monobot chat handler (group 0)
