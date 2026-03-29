@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from monobank import MonobankClient
@@ -66,59 +66,80 @@ def setup(db: Database, mono: MonobankClient, classifier: Classifier,
 
         await bot.send_message(chat_id, "\n".join(lines), parse_mode="Markdown")
 
+    def _help_keyboard() -> InlineKeyboardMarkup:
+        rows = [
+            [
+                InlineKeyboardButton("🔄 Синк Mono",       callback_data="help_sync"),
+                InlineKeyboardButton("📊 Статистика",       callback_data="help_stats"),
+            ],
+            [
+                InlineKeyboardButton("📅 Тиждень",          callback_data="help_week"),
+                InlineKeyboardButton("🗂 Категорії",        callback_data="help_categories"),
+            ],
+            [
+                InlineKeyboardButton("🔥 Розбір витрат",    callback_data="help_roast"),
+                InlineKeyboardButton("💡 Порада",           callback_data="help_advice"),
+            ],
+            [
+                InlineKeyboardButton("🔁 Рекласифікація",   callback_data="help_reclassify"),
+                InlineKeyboardButton("💰 Трекер витрат",    callback_data="help_expenses"),
+            ],
+        ]
+        if mono_partner:
+            rows.append([
+                InlineKeyboardButton(f"👤 Синк {partner_label}", callback_data="help_syncpartner"),
+                InlineKeyboardButton("👨‍👩‍ Сімейний",              callback_data="help_family"),
+            ])
+        rows.append([InlineKeyboardButton("🆔 Мій ID",      callback_data="help_myid")])
+        return InlineKeyboardMarkup(rows)
+
+    _HELP_DETAILS = {
+        "help_sync":        "🔄 *Синхронізація Monobank*\n\n/sync — останні 30 днів\n/sync 7 — довільна кількість днів\nАбо надішли *.csv / .xlsx* з Privat24 — імпортую автоматично",
+        "help_stats":       "📊 *Статистика за місяць*\n\n/stats — загальна картина: витрати, категорії, топ-5\nВключає патерни (нічні витрати, часті категорії)",
+        "help_week":        "📅 *Статистика за тиждень*\n\n/week — останні 7 днів у розбивці",
+        "help_categories":  "🗂 *Категорії*\n\n/categories — повний розклад по категоріях з відсотками\n/reclassify — повторна класифікація транзакцій у «Інше»",
+        "help_roast":       "🔥 *AI-розбір витрат*\n\n/roast — жорсткий розбір польотів з конкретними цифрами",
+        "help_advice":      "💡 *AI-порада*\n\n/advice — топ-3 де скоротити, конкретний план на цей тиждень",
+        "help_reclassify":  "🔁 *Рекласифікація*\n\n/reclassify — AI повторно класифікує всі транзакції у «❓ Інше»\nТе що AI не впізнає — покаже по одній з повною інфою для ручної класифікації",
+        "help_expenses":    "💰 *Трекер витрат*\n\n/expenses — меню трекера\n/estats — статистика витрат (з перемикачем місяць/рік/весь час)\n/history — останні записи\n\nАбо просто напиши витрату:\n_Готель 725 EUR 14.02_\n_Їжа 350_\nБот запитає про пропущені поля 👇",
+        "help_myid":        "🆔 *Мій Telegram ID*\n\n/myid — показати свій ID для налаштування бота",
+    }
+
     async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         owner = get_owner(update.effective_user.id)
         if owner is None:
             return
-        privat_hint = "\nНадішли CSV-виписку Privat24 — імпортую автоматично"
-        partner_hint = f"\n/syncpartner — синхронізувати {partner_label}\n/family — сімейний бюджет" if mono_partner else ""
         await update.message.reply_text(
-            "💳 MONOBOT\n"
-            "Фінансовий трекер без цензури\n\n"
-            "━━━━━━━━━━━━━━━\n"
-            "/sync — злити транзакції з Mono\n"
-            f"{privat_hint}"
-            "\n/stats — що ти наробив за місяць\n"
-            "/week — тижнева картина маслом\n"
-            "/categories — повний розклад\n"
-            "/reclassify — переосмислити некласифіковані\n"
-            "/roast — отримати по щці від AI\n"
-            "/advice — план як стати менш бідним"
-            f"{partner_hint}\n"
-            "━━━━━━━━━━━━━━━\n\n"
-            "Або просто напиши що хочеш дізнатись 👇"
+            "💳 *MONOBOT*\nФінансовий трекер без цензури\n\nВибери що потрібно 👇",
+            reply_markup=_help_keyboard(),
+            parse_mode="Markdown",
         )
 
     async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         owner = get_owner(update.effective_user.id)
         if owner is None:
             return
-        partner_section = (
-            f"\n👨‍👩‍ Сімейний бюджет\n"
-            f"/syncpartner — синхронізувати {partner_label}\n"
-            f"/family — витрати разом і окремо"
-        ) if mono_partner else ""
-
         await update.message.reply_text(
-            "💳 MONOBOT — список команд\n\n"
-            "📥 Синхронізація\n"
-            "/sync — Monobank (останні 30 днів)\n"
-            "/sync 7 — за довільну кількість днів\n"
-            "Надішли .csv/.xlsx з Privat24 — імпортую\n"
-            "/reclassify — переосмислити некласифіковані\n\n"
-            "📊 Статистика\n"
-            "/stats — місяць у цифрах\n"
-            "/week — тиждень\n"
-            "/categories — повний розклад по категоріях"
-            f"{partner_section}\n\n"
-            "🤖 AI-аналіз\n"
-            "/roast — жорсткий розбір витрат\n"
-            "/advice — конкретний план економії\n\n"
-            "💬 Чат\n"
-            "Просто напиши будь-яке питання\n\n"
-            "⚙️ Інше\n"
-            "/myid — дізнатись свій Telegram ID\n"
-            "/help — цей список"
+            "💳 *MONOBOT* — що вміє бот?\nВибери розділ 👇",
+            reply_markup=_help_keyboard(),
+            parse_mode="Markdown",
+        )
+
+    async def help_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        detail = _HELP_DETAILS.get(query.data)
+        if detail:
+            back = InlineKeyboardMarkup([[InlineKeyboardButton("← Назад", callback_data="help_back")]])
+            await query.edit_message_text(detail, reply_markup=back, parse_mode="Markdown")
+
+    async def help_back(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(
+            "💳 *MONOBOT* — що вміє бот?\nВибери розділ 👇",
+            reply_markup=_help_keyboard(),
+            parse_mode="Markdown",
         )
 
     async def myid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -451,6 +472,8 @@ def setup(db: Database, mono: MonobankClient, classifier: Classifier,
     return {
         "start": start,
         "help": help_cmd,
+        "help_callback": help_callback,
+        "help_back": help_back,
         "myid": myid,
         "sync": sync,
         "syncprivat": syncprivat,

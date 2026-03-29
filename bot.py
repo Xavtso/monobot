@@ -2,7 +2,7 @@ import logging
 import os
 import asyncio
 from aiohttp import web
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 from dotenv import load_dotenv
 
 from monobank import MonobankClient
@@ -46,6 +46,8 @@ def main():
     app.add_handler(CommandHandler("start",       handlers["start"]))
     app.add_handler(CommandHandler("help",        handlers["help"]))
     app.add_handler(CommandHandler("myid",        handlers["myid"]))
+    app.add_handler(CallbackQueryHandler(handlers["help_callback"], pattern=r"^help_(?!back)"))
+    app.add_handler(CallbackQueryHandler(handlers["help_back"],     pattern=r"^help_back$"))
     app.add_handler(CommandHandler("sync",        handlers["sync"]))
     app.add_handler(CommandHandler("syncprivat",  handlers["syncprivat"]))
     app.add_handler(CommandHandler("reclassify",  handlers["reclassify"]))
