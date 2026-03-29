@@ -11,6 +11,7 @@ from classifier import Classifier
 from analytics import Analytics
 from webhook_server import build_webhook_app, set_mono_public_key
 from handlers import setup, set_pending
+from expenses.handlers import register_expense_handlers
 
 load_dotenv()
 
@@ -63,12 +64,15 @@ def main():
     async def post_init(application):
         commands = [
             ("sync",        "Синхронізувати Monobank"),
-            ("stats",       "Статистика за місяць"),
+            ("stats",       "Статистика Monobank за місяць"),
             ("week",        "Статистика за тиждень"),
             ("categories",  "Витрати по категоріях"),
             ("reclassify",  "Переосмислити некласифіковані"),
             ("roast",       "Отримати по щці від AI"),
             ("advice",      "План як стати менш бідним"),
+            ("expenses",    "Трекер витрат"),
+            ("статистика",  "Статистика трекера витрат"),
+            ("history",     "Останні записи трекера"),
             ("myid",        "Мій Telegram ID"),
             ("help",        "Список всіх команд"),
         ]
@@ -120,6 +124,7 @@ def main():
                 ok_p = mono_partner.set_webhook(f"{webhook_url}/webhook/partner")
                 logger.info(f"Monobank webhook (partner): {'✅' if ok_p else '❌'} {webhook_url}/webhook/partner")
 
+    register_expense_handlers(app)
     app.post_init = post_init
 
     asyncio.set_event_loop(asyncio.new_event_loop())

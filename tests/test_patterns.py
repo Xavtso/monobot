@@ -13,9 +13,11 @@ def db():
     yield d
     os.unlink(path)
 
+_DAYTIME = 1743321600  # 2026-03-30 12:00:00 UTC — fixed noon timestamp, never triggers night pattern
+
 def _tx(tx_id, description, amount, ts=None, category="☕ Кафе/Ресторани"):
     return {"id": tx_id, "description": description, "amount": amount,
-            "time": ts or int(time.time()), "mcc": 0, "comment": "", "currencyCode": 980}
+            "time": ts if ts is not None else _DAYTIME, "mcc": 0, "comment": "", "currencyCode": 980}
 
 def test_no_patterns_on_first_transaction(db):
     tx = _tx("t1", "Starbucks", -15000)
